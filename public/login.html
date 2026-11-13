@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Iniciar sesión / Registro - StreamLab</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/common.js"></script>
+</head>
+<body>
+  <header class="topbar" id="topbar"></header>
+
+  <main style="flex: 1; display: flex; align-items: center; justify-content: center; padding: 2rem 1rem;">
+    <div class="form-card" style="width: 100%; margin: 0;">
+      <div style="display: flex; border-bottom: 1px solid var(--border); margin-bottom: 1.5rem;">
+        <button id="tab-login" class="btn" style="flex: 1; border-radius: 0; background: none; border-bottom: 2px solid var(--accent); color: #fff; font-weight: 700;">Iniciar sesión</button>
+        <button id="tab-register" class="btn" style="flex: 1; border-radius: 0; background: none; border-bottom: 2px solid transparent; color: var(--text-muted); font-weight: 700;">Registrarse</button>
+      </div>
+
+      <div id="error-msg" style="display: none; background: rgba(255, 59, 92, 0.15); border: 1px solid var(--live); color: #ff8598; padding: 0.75rem; border-radius: 6px; font-size: 0.85rem; margin-bottom: 1.25rem;"></div>
+
+      <!-- Formulario Login -->
+      <form id="login-form">
+        <div class="form-group">
+          <label class="form-label" for="login-username">Usuario</label>
+          <input type="text" id="login-username" class="form-control" placeholder="Tu nombre de usuario" required autocomplete="username">
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="login-password">Contraseña</label>
+          <input type="password" id="login-password" class="form-control" placeholder="Tu contraseña" required autocomplete="current-password">
+        </div>
+
+        <button type="submit" class="btn btn-primary" style="width: 100%; padding: 0.75rem; margin-top: 0.5rem;">Iniciar sesión</button>
+      </form>
+
+      <!-- Formulario Registro -->
+      <form id="register-form" style="display: none;">
+        <div class="form-group">
+          <label class="form-label" for="reg-username">Usuario (3-20 caracteres: a-z, 0-9, _)</label>
+          <input type="text" id="reg-username" class="form-control" placeholder="ej: streamer_pro" pattern="[a-z0-9_]{3,20}" required autocomplete="username">
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="reg-password">Contraseña (mínimo 6 caracteres)</label>
+          <input type="password" id="reg-password" class="form-control" placeholder="Al menos 6 caracteres" minlength="6" required autocomplete="new-password">
+        </div>
+
+        <button type="submit" class="btn btn-accent btn-primary" style="width: 100%; padding: 0.75rem; margin-top: 0.5rem;">Crear cuenta</button>
+      </form>
+    </div>
+  </main>
+
+  <script>
+    const tabLogin = document.getElementById('tab-login');
+    const tabRegister = document.getElementById('tab-register');
+    const loginForm = document.getElementById('login-form');
+    const registerForm = document.getElementById('register-form');
+    const errorMsg = document.getElementById('error-msg');
+
+    function showError(msg) {
+      if (!msg) {
+        errorMsg.style.display = 'none';
+        errorMsg.textContent = '';
+      } else {
+        errorMsg.style.display = 'block';
+        errorMsg.textContent = msg;
+      }
+    }
+
+    function setTab(tab) {
+      showError('');
+      if (tab === 'register') {
+        tabLogin.style.borderBottomColor = 'transparent';
+        tabLogin.style.color = 'var(--text-muted)';
+        tabRegister.style.borderBottomColor = 'var(--accent)';
+        tabRegister.style.color = '#fff';
+        loginForm.style.display = 'none';
+        registerForm.style.display = 'block';
+        window.location.hash = '#register';
+      } else {
+        tabRegister.style.borderBottomColor = 'transparent';
+        tabRegister.style.color = 'var(--text-muted)';
+        tabLogin.style.borderBottomColor = 'var(--accent)';
+        tabLogin.style.color = '#fff';
+        registerForm.style.display = 'none';
+        loginForm.style.display = 'block';
+        if (window.location.hash === '#register') {
+          history.replaceState(null, null, ' ');
+        }
+      }
+    }
+
+    tabLogin.addEventListener('click', () => setTab('login'));
+    tabRegister.addEventListener('click', () => setTab('register'));
+
+    loginForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      showError('');
+      const username = document.getElementById('login-username').value.trim().toLowerCase();
+      const password = document.getElementById('login-password').value;
+
+      try {
+        await api('/api/login', {
+          method: 'POST',
+          body: { username, password }
+        });
+        window.location.href = '/dashboard.html';
+      } catch (err) {
+        showError(err.message || 'Error al iniciar sesión');
+      }
+    });
+
+    registerForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      showError('');
+      const username = document.getElementById('reg-username').value.trim().toLowerCase();
+      const password = document.getElementById('reg-password').value;
+
+      try {
+        await api('/api/register', {
+          method: 'POST',
+          body: { username, password }
+        });
+        window.location.href = '/dashboard.html';
+      } catch (err) {
+        showError(err.message || 'Error al registrar la cuenta');
+      }
+    });
+
+    async function init() {
+      await renderTopbar();
+
+      // Comprobar si ya está logueado
+      try {
+        const res = await api('/api/me');
+        if (res.user) {
+          window.location.href = '/dashboard.html';
+          return;
+        }
+      } catch (e) {}
+
+      if (window.location.hash === '#register') {
+        setTab('register');
+      } else {
+        setTab('login');
+      }
+    }
+
+    window.addEventListener('hashchange', () => {
+      if (window.location.hash === '#register') {
+        setTab('register');
+      } else {
+        setTab('login');
+      }
+    });
+
+    init();
+  </script>
+</body>
+</html>

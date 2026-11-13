@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>StreamLab - Explorar transmisiones</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/common.js"></script>
+</head>
+<body>
+  <header class="topbar" id="topbar"></header>
+
+  <div class="app-container">
+    <aside class="sidebar" id="sidebar"></aside>
+
+    <main class="main-content">
+      <h1 class="dashboard-title" id="page-title" style="margin-bottom: 1rem;">Explorar canales</h1>
+
+      <div class="categories-bar" id="categories-bar"></div>
+
+      <div class="stream-grid" id="stream-grid"></div>
+    </main>
+  </div>
+
+  <script>
+    const socket = io();
+
+    const urlParams = new URLSearchParams(window.location.search);
+    let currentTab = urlParams.get('tab') || (urlParams.get('filter') === 'following' ? 'following' : 'explore');
+    let currentCategory = urlParams.get('category') || '';
+
+    async function loadCategories() {
+      const bar = document.getElementById('categories-bar');
+      if (currentTab === 'following') {
+        bar.style.display = 'none';
+        return;
+      }
+      bar.style.display = 'flex';
+
+      try {
+        const categories = await api('/api/categories');
+        let html = `
+          <button class="category-chip ${!currentCategory ? 'active' : ''}" data-category="">
+            Todo
+          </button>
+        `;
+
+        for (const cat of categories) {
+          const isActive = currentCategory === cat.name ? 'active' : '';
+          const countBadge = cat.live_count > 0 ? ` (${cat.live_count})` : '';
+          html += `
+            <button class="category-chip ${isActive}" data-category="${esc(cat.name)}">
+              ${esc(cat.name)}${countBadge}
+            </button>
+          `;
+        }
+
+        bar.innerHTML = html;
+
+        bar.querySelectorAll('.category-chip').forEach(btn => {
+          btn.addEventListener('click', () => {
+            currentCategory = btn.dataset.category;
+            const url = new URL(window.location);
+            if (currentCategory) {
+              url.searchParams.set('category', currentCategory);
+            } else {
+              url.searchParams.delete('category');
+            }
+            url.searchParams.delete('tab');
+            window.history.pushState({}, '', url);
+            loadCategories();
+            loadChannels();
+          });
+        });
+      } catch (err) {
+        bar.innerHTML = '';
+      }
+    }
+
+    async function loadChannels() {
+      const grid = document.getElementById('stream-grid');
+      const pageTitle = document.getElementById('page-title');
+
+      grid.innerHTML = '<div style="color: var(--text-muted); font-size: 0.95rem;">Cargando transmisiones...</div>';
+
+      try {
+        let channels = [];
+        if (currentTab === 'following') {
+          pageTitle.textContent = 'Canales que sigues';
+          try {
+            channels = await api('/api/following');
+          } catch (err) {
+            if (err.status === 401) {
+              grid.innerHTML = `
+                <div style="grid-column: 1 / -1; padding: 3rem 1rem; text-align: center; color: var(--text-muted);">
+                  <p style="font-size: 1.1rem; margin-bottom: 1rem;">Inicia sesión para ver los canales que sigues.</p>
+                  <a href="/login.html" class="btn btn-primary">Iniciar sesión</a>
+                </div>
+              `;
+              return;
+            }
+            throw err;
+          }
+        } else {
+          pageTitle.textContent = currentCategory ? `Canales de ${currentCategory}` : 'Explorar canales';
+          let url = '/api/channels';
+          if (currentCategory) {
+            url += `?category=${encodeURIComponent(currentCategory)}`;
+          }
+          channels = await api(url);
+        }
+
+        if (!channels || !channels.length) {
+          const msg = currentTab === 'following'
+            ? 'Aún no sigues a ningún canal.'
+            : (currentCategory ? `No hay canales en la categoría "${currentCategory}".` : 'No hay transmisiones disponibles.');
+          grid.innerHTML = `<div style="grid-column: 1 / -1; padding: 3rem 1rem; text-align: center; color: var(--text-muted); font-size: 1.05rem;">${esc(msg)}</div>`;
+          return;
+        }
+
+        grid.innerHTML = channels.map(cardHTML).join('');
+      } catch (err) {
+        grid.innerHTML = '<div style="grid-column: 1 / -1; color: var(--live); font-size: 0.95rem;">Error al cargar los canales.</div>';
+      }
+    }
+
+    async function init() {
+      await renderTopbar(currentTab === 'following' ? 'following' : 'explore');
+      await renderSidebar('#sidebar');
+      await loadCategories();
+      await loadChannels();
+    }
+
+    socket.on('live', () => {
+      loadChannels();
+      renderSidebar('#sidebar');
+      loadCategories();
+    });
+
+    window.addEventListener('popstate', () => {
+      const params = new URLSearchParams(window.location.search);
+      currentTab = params.get('tab') || (params.get('filter') === 'following' ? 'following' : 'explore');
+      currentCategory = params.get('category') || '';
+      renderTopbar(currentTab === 'following' ? 'following' : 'explore');
+      loadCategories();
+      loadChannels();
+    });
+
+    init();
+  </script>
+</body>
+</html>

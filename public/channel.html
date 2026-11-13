@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>StreamLab - Canal</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/vendor/hls.js"></script>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/common.js"></script>
+</head>
+<body>
+  <header class="topbar" id="topbar"></header>
+
+  <div class="channel-container">
+    <main class="channel-main">
+      <div class="player-box" id="player-box">
+        <video id="video-player" class="player-video" controls playsinline></video>
+        <div id="offline-screen" style="display: none; position: absolute; inset: 0; background: #000; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.75rem; color: var(--text-muted);">
+          <div style="font-size: 2.5rem; opacity: 0.6;">📺</div>
+          <div style="font-size: 1.25rem; font-weight: 700; color: #fff;">Canal desconectado</div>
+          <div style="font-size: 0.9rem;">El streamer no está transmitiendo en vivo en este momento.</div>
+        </div>
+      </div>
+
+      <div class="channel-header">
+        <div class="channel-user-info">
+          <div id="channel-avatar"></div>
+          <div class="channel-meta-box">
+            <h1 id="stream-title" class="channel-stream-title">Cargando transmisión...</h1>
+            <div class="channel-stream-author">
+              <span id="channel-username" style="font-weight: 700; color: #fff;"></span>
+              <span>•</span>
+              <span id="stream-category" class="card-category"></span>
+              <span id="live-badge-wrapper" style="display: none; margin-left: 0.5rem;">
+                <span class="badge-live" style="position: static;">EN VIVO</span>
+                <span id="header-viewers" style="font-size: 0.85rem; font-weight: 700; color: var(--live); margin-left: 0.35rem;">0</span>
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div class="channel-actions">
+          <div style="font-size: 0.9rem; color: var(--text-muted); text-align: right; margin-right: 0.5rem;">
+            <span id="followers-count" style="font-weight: 700; color: #fff;">0</span> seguidores
+          </div>
+          <button id="follow-btn" class="btn btn-primary" style="display: none;">Seguir</button>
+        </div>
+      </div>
+
+      <div class="vods-section" style="border-bottom: 1px solid var(--border);">
+        <h2 class="section-title">Acerca de este canal</h2>
+        <p id="channel-bio" style="color: var(--text-muted); font-size: 0.95rem; line-height: 1.6; white-space: pre-wrap;">Sin descripción.</p>
+      </div>
+
+      <div class="vods-section">
+        <h2 class="section-title">Grabaciones anteriores (VODs)</h2>
+        <div id="vods-list" class="stream-grid" style="grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));"></div>
+      </div>
+    </main>
+
+    <aside class="chat-sidebar">
+      <div class="chat-header">
+        <span>Chat de la transmisión</span>
+        <span id="chat-viewers" style="font-size: 0.8rem; color: var(--text-muted); font-weight: 500;">0 espectadores</span>
+      </div>
+
+      <div class="chat-messages" id="chat-messages"></div>
+
+      <div class="chat-input-box" id="chat-input-box">
+        <form id="chat-form" class="chat-input-wrapper">
+          <input type="text" id="chat-input" class="chat-input" placeholder="Enviar mensaje..." maxlength="300" autocomplete="off" required>
+          <button type="submit" class="btn btn-primary" style="padding: 0.5rem 0.85rem;">Enviar</button>
+        </form>
+      </div>
+    </aside>
+  </div>
+
+  <script>
+    const socket = io();
+    const video = document.getElementById('video-player');
+    const offlineScreen = document.getElementById('offline-screen');
+    const followBtn = document.getElementById('follow-btn');
+    const chatMessages = document.getElementById('chat-messages');
+    const chatForm = document.getElementById('chat-form');
+    const chatInput = document.getElementById('chat-input');
+    const chatInputBox = document.getElementById('chat-input-box');
+
+    let currentChannel = null;
+    let currentUser = null;
+    let hlsInstance = null;
+
+    // Obtener username de la ruta /c/:username
+    const pathParts = window.location.pathname.split('/').filter(Boolean);
+    const targetUsername = pathParts[1] || '';
+
+    function showOffline() {
+      if (hlsInstance) {
+        hlsInstance.destroy();
+        hlsInstance = null;
+      }
+      video.pause();
+      video.style.display = 'none';
+      offlineScreen.style.display = 'flex';
+      document.getElementById('live-badge-wrapper').style.display = 'none';
+    }
+
+    function playLiveStream(hlsUrl) {
+      offlineScreen.style.display = 'none';
+      video.style.display = 'block';
+      document.getElementById('live-badge-wrapper').style.display = 'inline-flex';
+
+      if (hlsInstance) {
+        hlsInstance.destroy();
+        hlsInstance = null;
+      }
+
+      if (window.Hls && Hls.isSupported()) {
+        hlsInstance = new Hls({ liveSyncDurationCount: 2 });
+        hlsInstance.loadSource(hlsUrl);
+        hlsInstance.attachMedia(video);
+
+        hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
+          video.play().catch(() => {});
+        });
+
+        hlsInstance.on(Hls.Events.ERROR, (event, data) => {
+          if (data.fatal) {
+            switch (data.type) {
+              case Hls.ErrorTypes.NETWORK_ERROR:
+                hlsInstance.startLoad();
+                break;
+              case Hls.ErrorTypes.MEDIA_ERROR:
+                hlsInstance.recoverMediaError();
+                break;
+              default:
+                hlsInstance.destroy();
+                hlsInstance = null;
+                showOffline();
+                break;
+            }
+          }
+        });
+      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        video.src = hlsUrl;
+        video.addEventListener('loadedmetadata', () => {
+          video.play().catch(() => {});
+        });
+      } else {
+        video.src = hlsUrl;
+      }
+    }
+
+    function playVod(vodUrl, vodName) {
+      if (hlsInstance) {
+        hlsInstance.destroy();
+        hlsInstance = null;
+      }
+      offlineScreen.style.display = 'none';
+      video.style.display = 'block';
+      video.src = vodUrl;
+      video.play().catch(() => {});
+      toast(`Reproduciendo VOD: ${vodName}`);
+    }
+
+    function appendChatMessage(msg) {
+      const msgEl = document.createElement('div');
+      msgEl.className = 'chat-msg';
+
+      const timeStr = msg.at ? new Date(msg.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+      msgEl.innerHTML = `
+        <span class="chat-msg-time">${esc(timeStr)}</span>
+        <span class="chat-msg-author" style="color: ${esc(msg.color || '#2ec4b6')}">${esc(msg.user)}:</span>
+        <span class="chat-msg-text">${esc(msg.text)}</span>
+      `;
+
+      chatMessages.appendChild(msgEl);
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+
+    function renderVods(vods) {
+      const container = document.getElementById('vods-list');
+      if (!vods || !vods.length) {
+        container.innerHTML = '<div style="color: var(--text-muted); font-size: 0.9rem;">No hay grabaciones anteriores disponibles.</div>';
+        return;
+      }
+
+      container.innerHTML = vods.map(vod => {
+        const dateStr = vod.created_at ? new Date(vod.created_at).toLocaleString() : '';
+        return `
+          <div class="stream-card" style="cursor: pointer;" onclick="playVod('${esc(vod.url)}', '${esc(vod.filename)}')">
+            <div class="thumbnail-wrapper" style="background: #111; display: flex; align-items: center; justify-content: center;">
+              <div style="font-size: 2rem; opacity: 0.7;">🎬</div>
+              <span class="badge-offline" style="top: auto; bottom: 8px; left: 8px;">${vod.size_mb} MB</span>
+            </div>
+            <div class="card-details" style="padding: 0.65rem 0.85rem;">
+              <div class="card-info">
+                <div class="card-title" title="${esc(vod.filename)}">${esc(vod.filename)}</div>
+                <div class="card-author">${esc(dateStr)}</div>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    async function loadChannel() {
+      if (!targetUsername) {
+        window.location.href = '/';
+        return;
+      }
+
+      try {
+        const meRes = await api('/api/me');
+        currentUser = meRes.user;
+      } catch (e) {
+        currentUser = null;
+      }
+
+      if (!currentUser) {
+        chatInputBox.innerHTML = `
+          <div style="padding: 0.6rem; text-align: center; font-size: 0.85rem; color: var(--text-muted);">
+            <a href="/login.html" class="nav-link" style="color: var(--accent); font-weight: 700;">Inicia sesión</a> para participar en el chat.
+          </div>
+        `;
+      }
+
+      try {
+        currentChannel = await api(`/api/channels/${encodeURIComponent(targetUsername)}`);
+      } catch (err) {
+        document.querySelector('.channel-main').innerHTML = `
+          <div style="padding: 4rem 1rem; text-align: center; color: var(--text-muted);">
+            <h2 style="font-size: 1.5rem; color: #fff; margin-bottom: 0.5rem;">Canal no encontrado</h2>
+            <p>El canal "${esc(targetUsername)}" no existe o fue eliminado.</p>
+            <a href="/" class="btn btn-primary" style="margin-top: 1.5rem;">Volver al inicio</a>
+          </div>
+        `;
+        return;
+      }
+
+      document.title = `${currentChannel.username} - StreamLab`;
+      document.getElementById('channel-username').textContent = currentChannel.username;
+      document.getElementById('channel-avatar').innerHTML = avatar(currentChannel.username);
+      document.getElementById('stream-title').textContent = currentChannel.title || 'Directo sin título';
+      document.getElementById('stream-category').textContent = currentChannel.category || 'Sin categoría';
+      document.getElementById('channel-bio').textContent = currentChannel.bio || 'Este creador aún no tiene una descripción.';
+      document.getElementById('followers-count').textContent = currentChannel.followers || 0;
+      document.getElementById('header-viewers').textContent = currentChannel.viewers || 0;
+      document.getElementById('chat-viewers').textContent = `${currentChannel.viewers || 0} espectadores`;
+
+      // Botón de seguir
+      if (currentUser && currentUser.username === currentChannel.username) {
+        followBtn.style.display = 'none';
+      } else {
+        followBtn.style.display = 'inline-flex';
+        updateFollowBtn(Boolean(currentChannel.following));
+        followBtn.onclick = toggleFollow;
+      }
+
+      // Reproducir si está en vivo
+      if (currentChannel.is_live && currentChannel.hls) {
+        playLiveStream(currentChannel.hls);
+      } else {
+        showOffline();
+      }
+
+      // Renderizar VODs
+      renderVods(currentChannel.vods);
+
+      // Unirse a la sala de Socket.io
+      socket.emit('join', currentChannel.username);
+    }
+
+    function updateFollowBtn(isFollowing) {
+      if (isFollowing) {
+        followBtn.textContent = 'Siguiendo';
+        followBtn.className = 'btn btn-secondary';
+      } else {
+        followBtn.textContent = 'Seguir';
+        followBtn.className = 'btn btn-primary';
+      }
+    }
+
+    async function toggleFollow() {
+      if (!currentUser) {
+        window.location.href = '/login.html';
+        return;
+      }
+
+      try {
+        const res = await api(`/api/channels/${encodeURIComponent(targetUsername)}/follow`, { method: 'POST' });
+        updateFollowBtn(res.following);
+        document.getElementById('followers-count').textContent = res.followers;
+        toast(res.following ? `Ahora sigues a ${targetUsername}` : `Has dejado de seguir a ${targetUsername}`);
+      } catch (err) {
+        toast(err.message, true);
+      }
+    }
+
+    // Socket.io eventos
+    socket.on('viewers', (n) => {
+      document.getElementById('header-viewers').textContent = n;
+      document.getElementById('chat-viewers').textContent = `${n} espectadores`;
+    });
+
+    socket.on('chat', (msg) => {
+      appendChatMessage(msg);
+    });
+
+    socket.on('chat:error', (txt) => {
+      toast(txt, true);
+    });
+
+    socket.on('channel:update', (data) => {
+      if (data.title !== undefined) {
+        document.getElementById('stream-title').textContent = data.title || 'Directo sin título';
+      }
+      if (data.category !== undefined) {
+        document.getElementById('stream-category').textContent = data.category || 'General';
+      }
+    });
+
+    socket.on('live', (data) => {
+      if (data.username === targetUsername) {
+        if (data.live) {
+          toast('¡La transmisión ha comenzado! Conectando...', false);
+          setTimeout(() => {
+            window.location.reload();
+          }, 2500);
+        } else {
+          toast('La transmisión ha finalizado.', false);
+          showOffline();
+        }
+      }
+    });
+
+    chatForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const text = chatInput.value.trim();
+      if (!text) return;
+      socket.emit('chat', text);
+      chatInput.value = '';
+    });
+
+    async function init() {
+      await renderTopbar('channel');
+      await loadChannel();
+    }
+
+    init();
+  </script>
+</body>
+</html>

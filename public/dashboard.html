@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Panel del Creador - StreamLab</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/common.js"></script>
+</head>
+<body>
+  <header class="topbar" id="topbar"></header>
+
+  <div class="dashboard-container">
+    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem;">
+      <h1 class="dashboard-title" style="margin-bottom: 0;">Panel de Control del Creador</h1>
+      <a id="btn-view-channel" href="#" class="btn btn-secondary">Ver mi canal</a>
+    </div>
+
+    <div class="dashboard-grid">
+      <!-- Tarjeta 1: Información del stream -->
+      <section class="dashboard-card">
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.25rem;">
+          <h2 style="font-size: 1.15rem; font-weight: 700;">Información del stream</h2>
+          <span id="stream-status" class="badge-offline" style="position: static;">OFFLINE</span>
+        </div>
+
+        <form id="stream-info-form">
+          <div class="form-group">
+            <label class="form-label" for="stream-title">Título de la transmisión</label>
+            <input type="text" id="stream-title" class="form-control" placeholder="¿De qué trata tu directo hoy?" maxlength="100">
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="stream-category">Categoría</label>
+            <select id="stream-category" class="form-control"></select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="stream-bio">Biografía / Acerca del creador</label>
+            <textarea id="stream-bio" class="form-control" rows="4" placeholder="Cuéntale a tu comunidad sobre ti..." maxlength="300"></textarea>
+          </div>
+
+          <button type="submit" class="btn btn-primary" style="padding: 0.65rem 1.25rem;">Guardar cambios</button>
+        </form>
+      </section>
+
+      <!-- Tarjeta 2: Conexión con OBS -->
+      <section class="dashboard-card">
+        <h2 style="font-size: 1.15rem; font-weight: 700; margin-bottom: 1.25rem;">Conexión con OBS Studio / Streamlabs</h2>
+
+        <div class="form-group">
+          <label class="form-label">Servidor RTMP</label>
+          <div class="stream-key-box">
+            <input type="text" id="rtmp-url" class="form-control" readonly style="font-family: monospace; background: var(--bg);">
+            <button type="button" id="copy-rtmp" class="btn btn-secondary">Copiar</button>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Clave de emisión OBS (USUARIO?key=STREAM_KEY)</label>
+          <div class="stream-key-box">
+            <input type="password" id="obs-key" class="form-control" readonly style="font-family: monospace; background: var(--bg);">
+            <button type="button" id="toggle-key" class="btn btn-secondary">Mostrar</button>
+            <button type="button" id="copy-key" class="btn btn-secondary">Copiar</button>
+          </div>
+          <small style="color: var(--text-muted); font-size: 0.75rem; margin-top: 0.35rem;">No compartas tu clave de transmisión con nadie.</small>
+        </div>
+
+        <div style="margin-top: 1rem; margin-bottom: 1.5rem;">
+          <button type="button" id="btn-regenerate" class="btn btn-danger" style="font-size: 0.85rem; padding: 0.5rem 0.85rem;">Regenerar clave</button>
+        </div>
+
+        <div style="background: var(--panel-alt); border: 1px solid var(--border); border-radius: 6px; padding: 1rem; font-size: 0.8rem; line-height: 1.6; color: var(--text-muted);">
+          <strong style="color: #fff; display: block; margin-bottom: 0.35rem;">Recomendaciones de configuración en OBS:</strong>
+          <ul style="padding-left: 1.2rem; margin: 0;">
+            <li><strong>Emisión:</strong> Servicio <em>Personalizado...</em></li>
+            <li><strong>Servidor:</strong> Pega la URL del servidor mostrada arriba</li>
+            <li><strong>Clave de retransmisión:</strong> Pega la clave de emisión completa</li>
+            <li><strong>Salida (Codificador de vídeo):</strong> x264 o NVENC (H.264)</li>
+            <li><strong>Intervalo de fotogramas clave:</strong> 2 segundos</li>
+            <li><strong>Tasa de bits:</strong> 2500 - 6000 Kbps</li>
+          </ul>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <script>
+    let dashboardData = null;
+
+    const streamTitle = document.getElementById('stream-title');
+    const streamCategory = document.getElementById('stream-category');
+    const streamBio = document.getElementById('stream-bio');
+    const streamStatus = document.getElementById('stream-status');
+    const rtmpUrlInput = document.getElementById('rtmp-url');
+    const obsKeyInput = document.getElementById('obs-key');
+    const btnViewChannel = document.getElementById('btn-view-channel');
+    const formInfo = document.getElementById('stream-info-form');
+    const toggleKeyBtn = document.getElementById('toggle-key');
+    const copyRtmpBtn = document.getElementById('copy-rtmp');
+    const copyKeyBtn = document.getElementById('copy-key');
+    const btnRegenerate = document.getElementById('btn-regenerate');
+
+    function updateObsKey() {
+      if (!dashboardData) return;
+      const fullObsKey = `${dashboardData.username}?key=${dashboardData.stream_key}`;
+      obsKeyInput.value = fullObsKey;
+    }
+
+    async function loadDashboard() {
+      try {
+        dashboardData = await api('/api/dashboard');
+      } catch (err) {
+        window.location.href = '/login.html';
+        return;
+      }
+
+      btnViewChannel.href = `/c/${dashboardData.username}`;
+
+      // Estado
+      if (dashboardData.is_live) {
+        streamStatus.textContent = 'EN VIVO';
+        streamStatus.className = 'badge-live';
+      } else {
+        streamStatus.textContent = 'OFFLINE';
+        streamStatus.className = 'badge-offline';
+      }
+
+      // Campos
+      streamTitle.value = dashboardData.title || '';
+      streamBio.value = dashboardData.bio || '';
+
+      // Categorías
+      streamCategory.innerHTML = '';
+      const categories = dashboardData.categories || ['Videojuegos', 'Programación', 'Educación', 'Música', 'Charlas', 'Arte'];
+      for (const cat of categories) {
+        const opt = document.createElement('option');
+        opt.value = cat;
+        opt.textContent = cat;
+        if (cat === dashboardData.category) opt.selected = true;
+        streamCategory.appendChild(opt);
+      }
+
+      // Conexión
+      rtmpUrlInput.value = dashboardData.rtmp_url;
+      updateObsKey();
+    }
+
+    // Guardar información del stream
+    formInfo.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try {
+        const payload = {
+          title: streamTitle.value.trim(),
+          category: streamCategory.value,
+          bio: streamBio.value.trim()
+        };
+
+        const res = await api('/api/dashboard', {
+          method: 'PUT',
+          body: payload
+        });
+
+        toast('Información del canal actualizada correctamente');
+      } catch (err) {
+        toast(err.message || 'Error al actualizar', true);
+      }
+    });
+
+    // Mostrar/ocultar clave
+    toggleKeyBtn.addEventListener('click', () => {
+      if (obsKeyInput.type === 'password') {
+        obsKeyInput.type = 'text';
+        toggleKeyBtn.textContent = 'Ocultar';
+      } else {
+        obsKeyInput.type = 'password';
+        toggleKeyBtn.textContent = 'Mostrar';
+      }
+    });
+
+    // Copiar servidor RTMP
+    copyRtmpBtn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(rtmpUrlInput.value);
+        toast('URL del servidor copiada al portapapeles');
+      } catch (err) {
+        rtmpUrlInput.select();
+        document.execCommand('copy');
+        toast('Copiado');
+      }
+    });
+
+    // Copiar clave OBS
+    copyKeyBtn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(obsKeyInput.value);
+        toast('Clave de emisión copiada al portapapeles');
+      } catch (err) {
+        obsKeyInput.type = 'text';
+        obsKeyInput.select();
+        document.execCommand('copy');
+        obsKeyInput.type = 'password';
+        toast('Copiada');
+      }
+    });
+
+    // Regenerar clave
+    btnRegenerate.addEventListener('click', async () => {
+      const ok = confirm('¿Estás seguro de que deseas regenerar la clave de transmisión? La clave anterior dejará de funcionar y deberás actualizarla en OBS.');
+      if (!ok) return;
+
+      try {
+        const res = await api('/api/dashboard/regenerate-key', { method: 'POST' });
+        dashboardData.stream_key = res.stream_key;
+        updateObsKey();
+        toast('Clave de transmisión regenerada con éxito');
+      } catch (err) {
+        toast(err.message || 'Error al regenerar la clave', true);
+      }
+    });
+
+    async function init() {
+      await renderTopbar('dashboard');
+      await loadDashboard();
+    }
+
+    init();
+  </script>
+</body>
+</html>
